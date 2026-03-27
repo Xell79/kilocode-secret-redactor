@@ -1,0 +1,54 @@
+{
+  "name": "opencode-secret-redactor",
+  "version": "0.1.0",
+  "description": "OpenCode plugin that redacts secrets from LLM context and restores them for tool execution",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check src/",
+    "lint:fix": "biome check --write src/",
+    "format": "biome format --write src/",
+    "prepublishOnly": "npm run lint && npm run typecheck && npm run test && npm run build"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "security",
+    "secrets",
+    "redaction",
+    "llm",
+    "ai"
+  ],
+  "author": "casonadams",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/casonadams/opencode-secret-redactor"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": "*"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.9",
+    "@opencode-ai/plugin": "latest",
+    "tsup": "^8.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  }
+}
