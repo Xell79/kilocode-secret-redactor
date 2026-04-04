@@ -22,6 +22,7 @@ function uniqueTypes(labels: ReadonlyArray<string>): string[] {
   return Array.from(types);
 }
 
+// Named export for programmatic consumers
 export const SecretRedactor: Plugin = async ({ client }) => {
   const [
     { REDACT_OUTPUT_TOOLS, UNREDACT_ARGS_TOOLS },
@@ -59,3 +60,6 @@ export const SecretRedactor: Plugin = async ({ client }) => {
     },
   };
 };
+
+// OpenCode resolves npm plugins via the default export
+export default SecretRedactor;
