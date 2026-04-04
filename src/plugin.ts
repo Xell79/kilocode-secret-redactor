@@ -13,8 +13,16 @@ function isToolInScope(tool: string, tools: ReadonlyArray<string>): boolean {
   return tools.includes(tool);
 }
 
+function uniqueTypes(labels: ReadonlyArray<string>): string[] {
+  const types = new Set<string>();
+  for (const label of labels) {
+    types.add(label.replace(/_\d+$/, ""));
+  }
+  return Array.from(types);
+}
+
 // Named export for programmatic consumers
-export const SecretRedactor: Plugin = async () => {
+export const SecretRedactor: Plugin = async ({ client }) => {
   const [
     { REDACT_OUTPUT_TOOLS, UNREDACT_ARGS_TOOLS },
     { redactDeep, unredactDeep },
@@ -25,10 +33,23 @@ export const SecretRedactor: Plugin = async () => {
 
   return {
     "chat.message": async (_input, output) => {
+      const allLabels: string[] = [];
       for (const part of output.parts) {
         if (!isTextPart(part)) continue;
         const result = redactDeep(part.text, vault);
         part.text = result.value as string;
+        allLabels.push(...result.labels);
+      }
+      if (allLabels.length > 0) {
+        const types = uniqueTypes(allLabels);
+        client.tui
+          .showToast({
+            body: {
+              message: `Redacted ${allLabels.length} secret(s) from chat: ${types.join(", ")}`,
+              variant: "warning",
+            },
+          })
+          .catch(() => {});
       }
     },
 
@@ -46,6 +67,18 @@ export const SecretRedactor: Plugin = async () => {
 
       const result = redactDeep(output.output, vault);
       output.output = result.value as string;
+
+      if (result.labels.length > 0) {
+        const types = uniqueTypes(result.labels);
+        client.tui
+          .showToast({
+            body: {
+              message: `Redacted ${result.labels.length} secret(s) from ${input.tool}: ${types.join(", ")}`,
+              variant: "warning",
+            },
+          })
+          .catch(() => {});
+      }
     },
   };
 };
