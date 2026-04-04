@@ -1,26 +1,36 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { SecretRedactor } from "./plugin.js";
-
-function createMockClient() {
-  return {
-    tui: {
-      showToast: vi.fn().mockResolvedValue(true),
-    },
-  };
-}
 
 describe("SecretRedactor plugin", () => {
   it("initializes and returns hook handlers", async () => {
-    const client = createMockClient();
-    const hooks = await SecretRedactor({ client } as never);
+    const hooks = await SecretRedactor({} as never);
 
+    expect(hooks).toHaveProperty("chat.message");
     expect(hooks).toHaveProperty("tool.execute.before");
     expect(hooks).toHaveProperty("tool.execute.after");
   });
 
+  it("redacts secrets in user chat message text parts", async () => {
+    const hooks = await SecretRedactor({} as never);
+    const chatHook = hooks["chat.message"] as (
+      input: Record<string, unknown>,
+      output: { parts: Array<{ type: string; text?: string }> },
+    ) => Promise<void>;
+
+    const parts = [
+      { type: "text", text: "my token is ghp_abc123def456ghi789jkl012mno345pqr678" },
+      { type: "file", mime: "image/png", url: "data:..." },
+    ];
+
+    await chatHook({}, { parts } as never);
+
+    expect(parts[0].text).toMatch(/^my token is <<REDACTED:github_pat_\d+>>$/);
+    // Non-text parts are untouched
+    expect(parts[1]).not.toHaveProperty("text");
+  });
+
   it("redacts JWT in bash tool output", async () => {
-    const client = createMockClient();
-    const hooks = await SecretRedactor({ client } as never);
+    const hooks = await SecretRedactor({} as never);
     const afterHook = hooks["tool.execute.after"] as (
       input: Record<string, unknown>,
       output: Record<string, unknown>,
@@ -32,32 +42,11 @@ describe("SecretRedactor plugin", () => {
 
     await afterHook({ tool: "bash" }, output);
 
-    expect(output.output).toBe("token: <<REDACTED:jwt_1>>");
-  });
-
-  it("fires a toast when secrets are redacted", async () => {
-    const client = createMockClient();
-    const hooks = await SecretRedactor({ client } as never);
-    const afterHook = hooks["tool.execute.after"] as (
-      input: Record<string, unknown>,
-      output: Record<string, unknown>,
-    ) => Promise<void>;
-
-    const jwt =
-      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
-    await afterHook({ tool: "bash" }, { output: jwt });
-
-    expect(client.tui.showToast).toHaveBeenCalledWith({
-      body: {
-        message: expect.stringContaining("Redacted 1 secret(s)"),
-        variant: "warning",
-      },
-    });
+    expect(output.output).toMatch(/^token: <<REDACTED:jwt_\d+>>$/);
   });
 
   it("unredacts tokens in bash tool args before execution", async () => {
-    const client = createMockClient();
-    const hooks = await SecretRedactor({ client } as never);
+    const hooks = await SecretRedactor({} as never);
     const afterHook = hooks["tool.execute.after"] as (
       input: Record<string, unknown>,
       output: Record<string, unknown>,
@@ -67,21 +56,24 @@ describe("SecretRedactor plugin", () => {
       output: Record<string, unknown>,
     ) => Promise<void>;
 
-    // First redact a JWT
+    // First redact a JWT via tool output
     const jwt =
       "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
-    await afterHook({ tool: "bash" }, { output: jwt });
+    const toolOutput = { output: jwt };
+    await afterHook({ tool: "bash" }, toolOutput);
+
+    // Extract the redacted label
+    const redactedToken = toolOutput.output as string;
 
     // Then use the redacted token in a command
-    const args = { command: "curl -H 'Bearer <<REDACTED:jwt_1>>'" };
+    const args = { command: `curl -H 'Bearer ${redactedToken}'` };
     await beforeHook({ tool: "bash" }, { args });
 
     expect(args.command).toBe(`curl -H 'Bearer ${jwt}'`);
   });
 
   it("skips tools not in scope", async () => {
-    const client = createMockClient();
-    const hooks = await SecretRedactor({ client } as never);
+    const hooks = await SecretRedactor({} as never);
     const afterHook = hooks["tool.execute.after"] as (
       input: Record<string, unknown>,
       output: Record<string, unknown>,
@@ -93,13 +85,11 @@ describe("SecretRedactor plugin", () => {
 
     await afterHook({ tool: "glob" }, output);
 
-    // Should not be redacted since glob is not in scope
     expect(output.output).toBe(jwt);
   });
 
   it("handles null/undefined output gracefully", async () => {
-    const client = createMockClient();
-    const hooks = await SecretRedactor({ client } as never);
+    const hooks = await SecretRedactor({} as never);
     const afterHook = hooks["tool.execute.after"] as (
       input: Record<string, unknown>,
       output: Record<string, unknown>,
@@ -107,8 +97,6 @@ describe("SecretRedactor plugin", () => {
 
     await afterHook({ tool: "bash" }, { output: undefined });
     await afterHook({ tool: "bash" }, { output: null });
-
     // Should not throw
-    expect(client.tui.showToast).not.toHaveBeenCalled();
   });
 });

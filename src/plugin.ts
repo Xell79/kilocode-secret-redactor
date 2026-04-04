@@ -1,29 +1,20 @@
 import type { Plugin } from "@opencode-ai/plugin";
 
-interface ToastClient {
-  tui: {
-    showToast: (opts: { body: { message: string; variant: string } }) => Promise<unknown>;
-  };
+interface TextPart {
+  type: "text";
+  text: string;
 }
 
-function toast(client: ToastClient, message: string, variant: string): void {
-  client.tui.showToast({ body: { message, variant } }).catch(() => {});
+function isTextPart(part: unknown): part is TextPart {
+  return typeof part === "object" && part !== null && (part as TextPart).type === "text";
 }
 
 function isToolInScope(tool: string, tools: ReadonlyArray<string>): boolean {
   return tools.includes(tool);
 }
 
-function uniqueTypes(labels: ReadonlyArray<string>): string[] {
-  const types = new Set<string>();
-  for (const label of labels) {
-    types.add(label.replace(/_\d+$/, ""));
-  }
-  return Array.from(types);
-}
-
 // Named export for programmatic consumers
-export const SecretRedactor: Plugin = async ({ client }) => {
+export const SecretRedactor: Plugin = async () => {
   const [
     { REDACT_OUTPUT_TOOLS, UNREDACT_ARGS_TOOLS },
     { redactDeep, unredactDeep },
@@ -33,6 +24,14 @@ export const SecretRedactor: Plugin = async ({ client }) => {
   const vault = createVault();
 
   return {
+    "chat.message": async (_input, output) => {
+      for (const part of output.parts) {
+        if (!isTextPart(part)) continue;
+        const result = redactDeep(part.text, vault);
+        part.text = result.value as string;
+      }
+    },
+
     "tool.execute.before": async (input, output) => {
       if (!isToolInScope(input.tool, UNREDACT_ARGS_TOOLS)) return;
 
@@ -47,16 +46,6 @@ export const SecretRedactor: Plugin = async ({ client }) => {
 
       const result = redactDeep(output.output, vault);
       output.output = result.value as string;
-
-      if (result.labels.length > 0) {
-        const count = result.labels.length;
-        const types = uniqueTypes(result.labels);
-        toast(
-          client as unknown as ToastClient,
-          `Redacted ${count} secret(s) from ${input.tool}: ${types.join(", ")}`,
-          "warning",
-        );
-      }
     },
   };
 };
