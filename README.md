@@ -12,19 +12,13 @@ credentials, Stripe keys, Slack tokens, JWTs, private keys, database
 connection strings, and many more. See
 [`src/patterns.ts`](src/patterns.ts) for the full list.
 
-## Install
-
-```sh
-npm install opencode-secret-redactor
-```
-
 ## Setup
 
 Add the plugin to your `opencode.json`:
 
 ```json
 {
-  "plugin": ["opencode-secret-redactor"]
+  "plugin": ["opencode-secret-redactor@0.5.1"]
 }
 ```
 

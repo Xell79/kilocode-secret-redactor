@@ -122,7 +122,7 @@ export const PATTERNS: ReadonlyArray<SecretPattern> = [
     pattern: /ecdsa-sha2-nistp(?:256|384|521)\s+[A-Za-z0-9+/]{60,}={0,2}/g,
   },
   // -- PII --
-  { label: "email", pattern: /(?<![:\/])[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g },
+  { label: "email", pattern: /(?<![:/])[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g },
   {
     label: "credit_card",
     pattern:
