@@ -1,4 +1,6 @@
 import type { Plugin } from "@opencode-ai/plugin";
+import type { RedactResult } from "./redactor.js";
+import type { SecretVault } from "./vault.js";
 
 interface TextPart {
   type: "text";
@@ -21,6 +23,21 @@ function uniqueTypes(labels: ReadonlyArray<string>): string[] {
   return Array.from(types);
 }
 
+function redactParts(
+  parts: Array<{ type: string; text?: string }>,
+  redactDeep: (value: unknown, vault: SecretVault) => RedactResult,
+  vault: SecretVault,
+): string[] {
+  const allLabels: string[] = [];
+  for (const part of parts) {
+    if (!isTextPart(part)) continue;
+    const result = redactDeep(part.text, vault);
+    part.text = result.value as string;
+    allLabels.push(...result.labels);
+  }
+  return allLabels;
+}
+
 // Named export for programmatic consumers
 export const SecretRedactor: Plugin = async ({ client }) => {
   const [
@@ -33,19 +50,33 @@ export const SecretRedactor: Plugin = async ({ client }) => {
 
   return {
     "chat.message": async (_input, output) => {
-      const allLabels: string[] = [];
-      for (const part of output.parts) {
-        if (!isTextPart(part)) continue;
-        const result = redactDeep(part.text, vault);
-        part.text = result.value as string;
-        allLabels.push(...result.labels);
-      }
+      const allLabels = redactParts(output.parts, redactDeep, vault);
+
       if (allLabels.length > 0) {
         const types = uniqueTypes(allLabels);
         client.tui
           .showToast({
             body: {
               message: `Redacted ${allLabels.length} secret(s) from chat: ${types.join(", ")}`,
+              variant: "warning",
+            },
+          })
+          .catch(() => {});
+      }
+    },
+
+    "experimental.chat.messages.transform": async (_input, output) => {
+      let totalRedacted = 0;
+      for (const msg of output.messages) {
+        const labels = redactParts(msg.parts, redactDeep, vault);
+        totalRedacted += labels.length;
+      }
+
+      if (totalRedacted > 0) {
+        client.tui
+          .showToast({
+            body: {
+              message: `Redacted ${totalRedacted} secret(s) from LLM context`,
               variant: "warning",
             },
           })

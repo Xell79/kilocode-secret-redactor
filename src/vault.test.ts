@@ -6,7 +6,7 @@ describe("vault", () => {
     const vault = createVault();
     const token = vault.store("api_key", "sk-secret-123");
 
-    expect(token).toBe("<<REDACTED:api_key>>");
+    expect(token).toBe("🔒api_key🔓");
   });
 
   it("returns the same token for duplicate values", () => {
@@ -23,14 +23,14 @@ describe("vault", () => {
 
     const result = vault.scrubText("password is hunter2 ok");
 
-    expect(result).toBe("password is <<REDACTED:db_pass>> ok");
+    expect(result).toBe("password is 🔒db_pass🔓 ok");
   });
 
   it("unscrubs redacted tokens back to real values", () => {
     const vault = createVault();
     vault.store("db_pass", "hunter2");
 
-    const result = vault.unscrubText("password is <<REDACTED:db_pass>> ok");
+    const result = vault.unscrubText("password is 🔒db_pass🔓 ok");
 
     expect(result).toBe("password is hunter2 ok");
   });
@@ -65,6 +65,6 @@ describe("vault", () => {
 
     const result = vault.scrubText("login admin with s3cret");
 
-    expect(result).toBe("login <<REDACTED:user>> with <<REDACTED:pass>>");
+    expect(result).toBe("login 🔒user🔓 with 🔒pass🔓");
   });
 });

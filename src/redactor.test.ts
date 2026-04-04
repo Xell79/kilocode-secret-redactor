@@ -9,7 +9,7 @@ describe("redactString", () => {
       "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
     const result = redactString(`token: ${jwt}`, vault);
 
-    expect(result.text).toBe("token: <<REDACTED:jwt_1>>");
+    expect(result.text).toBe("token: 🔒jwt_1🔓");
     expect(result.labels).toContain("jwt_1");
   });
 
@@ -19,7 +19,7 @@ describe("redactString", () => {
 
     const result = redactString("using custom-secret-value here", vault);
 
-    expect(result.text).toBe("using <<REDACTED:my_secret>> here");
+    expect(result.text).toBe("using 🔒my_secret🔓 here");
   });
 });
 
@@ -34,8 +34,8 @@ describe("redactDeep", () => {
     const result = redactDeep(input, vault);
     const output = result.value as Record<string, unknown>;
 
-    expect(output.stdout).toBe("token: <<REDACTED:gitlab_pat_1>>");
-    expect((output.nested as Record<string, unknown>).deep).toBe("<<REDACTED:github_pat_1>>");
+    expect(output.stdout).toBe("token: 🔒gitlab_pat_1🔓");
+    expect((output.nested as Record<string, unknown>).deep).toBe("🔒github_pat_1🔓");
     expect(result.labels).toHaveLength(2);
   });
 
@@ -46,7 +46,7 @@ describe("redactDeep", () => {
     const result = redactDeep(input, vault);
     const output = result.value as string[];
 
-    expect(output[0]).toBe("<<REDACTED:gitlab_pat_1>>");
+    expect(output[0]).toBe("🔒gitlab_pat_1🔓");
     expect(output[1]).toBe("no secret here");
   });
 
@@ -67,7 +67,7 @@ describe("unredactDeep", () => {
     const secret = "glpat-xyzABCDEFGH12345678901234";
     vault.store("gitlab_pat_1", secret);
 
-    const result = unredactDeep("<<REDACTED:gitlab_pat_1>>", vault);
+    const result = unredactDeep("🔒gitlab_pat_1🔓", vault);
 
     expect(result).toBe(secret);
   });
@@ -76,7 +76,7 @@ describe("unredactDeep", () => {
     const vault = createVault();
     vault.store("tok", "real-value");
 
-    const input = { cmd: "curl <<REDACTED:tok>>", meta: { x: "<<REDACTED:tok>>" } };
+    const input = { cmd: "curl 🔒tok🔓", meta: { x: "🔒tok🔓" } };
     const result = unredactDeep(input, vault) as Record<string, unknown>;
 
     expect(result.cmd).toBe("curl real-value");

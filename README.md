@@ -2,7 +2,7 @@
 
 An [OpenCode](https://opencode.ai) plugin that prevents secrets from leaking
 into LLM context. Secrets detected in tool output are replaced with
-`<<REDACTED:label>>` tokens before the model sees them, then transparently
+`🔒label🔓` tokens before the model sees them, then transparently
 restored when a tool needs the real value for execution.
 
 ## Detected secret types
