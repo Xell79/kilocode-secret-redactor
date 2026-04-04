@@ -1,7 +1,4 @@
 import type { Plugin } from "@opencode-ai/plugin";
-import { REDACT_OUTPUT_TOOLS, UNREDACT_ARGS_TOOLS } from "./config.js";
-import { redactDeep, unredactDeep } from "./redactor.js";
-import { createVault } from "./vault.js";
 
 interface ToastClient {
   tui: {
@@ -26,6 +23,12 @@ function uniqueTypes(labels: ReadonlyArray<string>): string[] {
 }
 
 export const SecretRedactor: Plugin = async ({ client }) => {
+  const [
+    { REDACT_OUTPUT_TOOLS, UNREDACT_ARGS_TOOLS },
+    { redactDeep, unredactDeep },
+    { createVault },
+  ] = await Promise.all([import("./config.js"), import("./redactor.js"), import("./vault.js")]);
+
   const vault = createVault();
 
   return {
