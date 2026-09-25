@@ -6,7 +6,22 @@ describe("vault", () => {
     const vault = createVault();
     const token = vault.store("api_key", "sk-secret-123");
 
-    expect(token).toBe("🔒api_key🔓");
+    expect(token).toBe("🔒api_key_1🔓");
+  });
+
+  it("does not collide when one category has two values", () => {
+    const vault = createVault();
+    const first = vault.store("api_key", "value-one-aaa");
+    const second = vault.store("api_key", "value-two-bbb");
+    expect(first).toBe("🔒api_key_1🔓");
+    expect(second).toBe("🔒api_key_2🔓");
+    expect(vault.unscrubText(`${first} ${second}`)).toBe("value-one-aaa value-two-bbb");
+  });
+
+  it("fails closed when the mapping limit is exceeded", () => {
+    const vault = createVault(1);
+    vault.store("a", "value-one");
+    expect(() => vault.store("b", "value-two")).toThrow(/limit/);
   });
 
   it("returns the same token for duplicate values", () => {
@@ -23,14 +38,14 @@ describe("vault", () => {
 
     const result = vault.scrubText("password is hunter2 ok");
 
-    expect(result).toBe("password is 🔒db_pass🔓 ok");
+    expect(result).toBe("password is 🔒db_pass_1🔓 ok");
   });
 
   it("unscrubs redacted tokens back to real values", () => {
     const vault = createVault();
     vault.store("db_pass", "hunter2");
 
-    const result = vault.unscrubText("password is 🔒db_pass🔓 ok");
+    const result = vault.unscrubText("password is 🔒db_pass_1🔓 ok");
 
     expect(result).toBe("password is hunter2 ok");
   });
@@ -58,6 +73,16 @@ describe("vault", () => {
     expect(vault.size).toBe(2);
   });
 
+  it("skips stored values longer than the requested bound and clears them", () => {
+    const vault = createVault();
+    vault.store("long", "x".repeat(40));
+    vault.store("short", "short-secret");
+    expect([...vault.valuesUpTo(12)]).toEqual([["short-secret", "🔒short_1🔓"]]);
+    vault.clear();
+    expect(vault.size).toBe(0);
+    expect([...vault.valuesUpTo(100)]).toEqual([]);
+  });
+
   it("handles multiple secrets in one text", () => {
     const vault = createVault();
     vault.store("user", "admin");
@@ -65,6 +90,6 @@ describe("vault", () => {
 
     const result = vault.scrubText("login admin with s3cret");
 
-    expect(result).toBe("login 🔒user🔓 with 🔒pass🔓");
+    expect(result).toBe("login 🔒user_1🔓 with 🔒pass_1🔓");
   });
 });

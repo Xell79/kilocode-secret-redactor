@@ -8,7 +8,7 @@ describe("detectSecrets", () => {
     const results = detectSecrets(`token: ${jwt}`);
 
     expect(results).toHaveLength(1);
-    expect(results[0].label).toMatch(/^jwt_/);
+    expect(results[0].label).toBe("jwt");
     expect(results[0].value).toBe(jwt);
   });
 
@@ -17,7 +17,7 @@ describe("detectSecrets", () => {
     const results = detectSecrets(pat);
 
     expect(results).toHaveLength(1);
-    expect(results[0].label).toMatch(/^gitlab_pat_/);
+    expect(results[0].label).toBe("gitlab_pat");
   });
 
   it("detects a GitLab pipeline trigger token", () => {
@@ -25,7 +25,7 @@ describe("detectSecrets", () => {
     const results = detectSecrets(token);
 
     expect(results).toHaveLength(1);
-    expect(results[0].label).toMatch(/^gitlab_pipeline_trigger_/);
+    expect(results[0].label).toBe("gitlab_pipeline_trigger");
   });
 
   it("detects a GitHub PAT", () => {
@@ -33,7 +33,7 @@ describe("detectSecrets", () => {
     const results = detectSecrets(pat);
 
     expect(results).toHaveLength(1);
-    expect(results[0].label).toMatch(/^github_pat_/);
+    expect(results[0].label).toBe("github_pat");
   });
 
   it("detects a gcloud access token", () => {
@@ -41,28 +41,28 @@ describe("detectSecrets", () => {
     const results = detectSecrets(token);
 
     expect(results).toHaveLength(1);
-    expect(results[0].label).toMatch(/^gcloud_access_token_/);
+    expect(results[0].label).toBe("gcloud_access_token");
   });
 
   it("detects an AWS access key", () => {
     const results = detectSecrets("key: AKIAIOSFODNN7EXAMPLE");
 
     expect(results).toHaveLength(1);
-    expect(results[0].label).toMatch(/^aws_access_key_/);
+    expect(results[0].label).toBe("aws_access_key");
   });
 
   it("detects an AWS secret key with context", () => {
     const results = detectSecrets("AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY");
 
     expect(results).toHaveLength(1);
-    expect(results[0].label).toMatch(/^aws_secret_key_/);
+    expect(results[0].label).toBe("aws_secret_key");
     expect(results[0].value).toBe("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY");
   });
 
   it("does not false-positive on random UUIDs", () => {
     const results = detectSecrets("id: 550e8400-e29b-41d4-a716-446655440000");
 
-    const herokuMatch = results.find((r) => r.label.startsWith("heroku"));
+    const herokuMatch = results.find((r) => r.label === "heroku_api_key");
     expect(herokuMatch).toBeUndefined();
   });
 
@@ -81,7 +81,7 @@ describe("detectSecrets", () => {
     const results = detectSecrets("postgres://admin:s3cretP4ss@db.example.com:5432/mydb");
 
     expect(results.length).toBeGreaterThanOrEqual(1);
-    expect(results[0].label).toMatch(/^database_url_/);
+    expect(results[0].label).toBe("database_url");
   });
 
   it("detects a private key block", () => {
@@ -90,7 +90,7 @@ describe("detectSecrets", () => {
     const results = detectSecrets(key);
 
     expect(results).toHaveLength(1);
-    expect(results[0].label).toMatch(/^private_key_/);
+    expect(results[0].label).toBe("private_key");
   });
 
   it("ignores strings shorter than minimum length", () => {
@@ -106,16 +106,15 @@ describe("detectSecrets", () => {
     const results = detectSecrets(key);
 
     expect(results).toHaveLength(1);
-    expect(results[0].label).toMatch(/^azure_storage_key_/);
+    expect(results[0].label).toBe("azure_storage_key");
   });
 
   it("detects an Azure SAS token", () => {
     const url =
       "https://myaccount.blob.core.windows.net/c?sv=2021-06-08&sig=dGhpcyBpcyBhIGZha2Ugc2lnbmF0dXJlIHZhbHVl%2BTest%3D%3D";
-    const results = detectSecrets(url);
+    const results = detectSecrets(url, undefined, { disabledTypes: new Set(["url"]) });
 
-    expect(results).toHaveLength(1);
-    expect(results[0].label).toMatch(/^azure_sas_token_/);
+    expect(results.map((item) => item.label)).toContain("azure_sas_token");
   });
 
   // -- Shopify --
@@ -125,7 +124,7 @@ describe("detectSecrets", () => {
     const results = detectSecrets(token);
 
     expect(results).toHaveLength(1);
-    expect(results[0].label).toMatch(/^shopify_access_token_/);
+    expect(results[0].label).toBe("shopify_access_token");
   });
 
   // -- Additional SaaS --
@@ -133,7 +132,7 @@ describe("detectSecrets", () => {
     const results = detectSecrets("key-3ax6xnjp29jd6fds4gc373sgvjxteol0");
 
     expect(results).toHaveLength(1);
-    expect(results[0].label).toMatch(/^mailgun_api_key_/);
+    expect(results[0].label).toBe("mailgun_api_key");
   });
 
   it("detects a Mailchimp API key", () => {
@@ -142,14 +141,14 @@ describe("detectSecrets", () => {
     const results = detectSecrets(key);
 
     expect(results).toHaveLength(1);
-    expect(results[0].label).toMatch(/^mailchimp_api_key_/);
+    expect(results[0].label).toBe("mailchimp_api_key");
   });
 
   it("detects a Docker PAT", () => {
     const results = detectSecrets("dckr_pat_a1b2c3d4e5f6a7b8c9d0e1f2");
 
     expect(results).toHaveLength(1);
-    expect(results[0].label).toMatch(/^docker_pat_/);
+    expect(results[0].label).toBe("docker_pat");
   });
 
   it("detects a Terraform Cloud token", () => {
@@ -158,7 +157,7 @@ describe("detectSecrets", () => {
     const results = detectSecrets(token);
 
     expect(results).toHaveLength(1);
-    expect(results[0].label).toMatch(/^terraform_cloud_token_/);
+    expect(results[0].label).toBe("terraform_cloud_token");
   });
 
   // -- SSH public keys --
@@ -168,7 +167,7 @@ describe("detectSecrets", () => {
     const results = detectSecrets(key);
 
     expect(results).toHaveLength(1);
-    expect(results[0].label).toMatch(/^ssh_public_key_/);
+    expect(results[0].label).toBe("ssh_public_key");
   });
 
   // -- PII --
@@ -176,35 +175,35 @@ describe("detectSecrets", () => {
     const results = detectSecrets("contact john.doe@example.com for info");
 
     expect(results).toHaveLength(1);
-    expect(results[0].label).toMatch(/^email_/);
+    expect(results[0].label).toBe("email");
   });
 
   it("detects a credit card number", () => {
     const results = detectSecrets("card: 4111 1111 1111 1111");
 
     expect(results).toHaveLength(1);
-    expect(results[0].label).toMatch(/^credit_card_/);
+    expect(results[0].label).toBe("credit_card");
   });
 
   it("detects a credit card without separators", () => {
     const results = detectSecrets("card: 4111111111111111");
 
     expect(results).toHaveLength(1);
-    expect(results[0].label).toMatch(/^credit_card_/);
+    expect(results[0].label).toBe("credit_card");
   });
 
   it("detects a US SSN", () => {
     const results = detectSecrets("ssn is 123-45-6789");
 
     expect(results).toHaveLength(1);
-    expect(results[0].label).toMatch(/^us_ssn_/);
+    expect(results[0].label).toBe("us_ssn");
   });
 
   it("detects a US phone number", () => {
     const results = detectSecrets("call +1-555-867-5309");
 
     expect(results).toHaveLength(1);
-    expect(results[0].label).toMatch(/^phone_us_/);
+    expect(results[0].label).toBe("phone_us");
   });
 
   // -- Generic env var secrets --
@@ -212,19 +211,26 @@ describe("detectSecrets", () => {
     const results = detectSecrets("PASSWORD=SuperSecretPassword123");
 
     expect(results).toHaveLength(1);
-    expect(results[0].label).toMatch(/^env_secret_/);
+    expect(results[0].label).toBe("env_secret");
   });
 
   it("detects a quoted SECRET env var", () => {
     const results = detectSecrets('SECRET="my-secret-value-here"');
 
     expect(results).toHaveLength(1);
-    expect(results[0].label).toMatch(/^env_secret_/);
+    expect(results[0].label).toBe("env_secret");
   });
 
   it("does not match env vars with short values", () => {
     const results = detectSecrets("PASSWORD=short");
 
+    expect(results).toHaveLength(0);
+  });
+
+  it("skips disabled categories", () => {
+    const results = detectSecrets("contact jane@example.com", undefined, {
+      disabledTypes: new Set(["email"]),
+    });
     expect(results).toHaveLength(0);
   });
 });

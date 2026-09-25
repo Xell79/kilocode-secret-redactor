@@ -1,218 +1,194 @@
 import { describe, expect, it, vi } from "vitest";
-import { SecretRedactor } from "./plugin.js";
+import { createServer } from "./plugin.js";
+import type { SecretScanner } from "./secret-scanner.js";
 
-function createMockClient() {
-  return {
-    tui: {
-      showToast: vi.fn().mockResolvedValue(true),
-    },
-  };
+const github = "ghp_R8z3kL9mN2pQ5tV7wX0yB4dF6hJ1oS3uA8cE";
+
+function client() {
+  return { app: { log: vi.fn().mockResolvedValue({}) } };
 }
 
-describe("SecretRedactor plugin", () => {
-  it("initializes and returns hook handlers", async () => {
-    const client = createMockClient();
-    const hooks = await SecretRedactor({ client } as never);
+function scanner(): SecretScanner {
+  return { version: "1.8.1", scan: vi.fn(async () => []) };
+}
 
-    expect(hooks).toHaveProperty("chat.message");
-    expect(hooks).toHaveProperty("experimental.chat.messages.transform");
-    expect(hooks).toHaveProperty("tool.execute.before");
-    expect(hooks).toHaveProperty("tool.execute.after");
+async function hooks(options: Record<string, unknown> = {}) {
+  const app = client();
+  const server = createServer({
+    resolveScanner: async () => "/bin/betterleaks",
+    createScanner: async () => scanner(),
+    loadEnv: async () => [],
+    worktree: "/tmp",
+    configPath: new URL("../secret-redactor.default.json", import.meta.url).pathname,
+  });
+  const loaded = await server(
+    {
+      client: app,
+      directory: "/tmp",
+      worktree: "/tmp",
+      serverUrl: new URL("http://localhost"),
+      options: {},
+    } as never,
+    options,
+  );
+  return { hooks: loaded, app };
+}
+
+describe("kilocode plugin", () => {
+  it("exports the canonical descriptor", async () => {
+    const plugin = (await import("./plugin.js")).default;
+    expect(plugin.id).toBe("kilocode-secret-redactor");
+    expect(plugin.server).toBeTypeOf("function");
   });
 
-  it("redacts secrets in user chat message text parts", async () => {
-    const client = createMockClient();
-    const hooks = await SecretRedactor({ client } as never);
-    const chatHook = hooks["chat.message"] as (
-      input: Record<string, unknown>,
-      output: { parts: Array<{ type: string; text?: string }> },
-    ) => Promise<void>;
-
+  it("redacts chat text and restores only approved tool args and final text", async () => {
+    const { hooks: loaded, app } = await hooks();
     const parts = [
-      { type: "text", text: "my token is ghp_R8z3kL9mN2pQ5tV7wX0yB4dF6hJ1oS3uA8cE" },
-      { type: "file", mime: "image/png", url: "data:..." },
+      { type: "text", text: `token ${github}` },
+      { type: "file", url: "data:" },
     ];
-
-    await chatHook({}, { parts } as never);
-
-    expect(parts[0].text).toMatch(/^my token is 🔒github_pat_\d+🔓$/);
+    await loaded["chat.message"]?.({ sessionID: "s1" } as never, { parts } as never);
+    expect(parts[0].text).toMatch(/^token 🔒github_pat_\d+🔓$/);
     expect(parts[1]).not.toHaveProperty("text");
+    expect(app.app.log).toHaveBeenCalled();
+
+    const args = { command: parts[0].text ?? "" };
+    await loaded["tool.execute.before"]?.(
+      { sessionID: "s1", tool: "bash" } as never,
+      { args } as never,
+    );
+    expect(args.command).toBe(`token ${github}`);
+
+    const web = { url: parts[0].text };
+    await loaded["tool.execute.before"]?.(
+      { sessionID: "s1", tool: "webfetch" } as never,
+      { args: web } as never,
+    );
+    expect(web.url).toBe(parts[0].text);
+
+    const finalText = { text: parts[0].text ?? "" };
+    await loaded["experimental.text.complete"]?.({ sessionID: "s1" } as never, finalText as never);
+    expect(finalText.text).toBe(`token ${github}`);
   });
 
-  it("fires a toast when secrets are redacted in chat messages", async () => {
-    const client = createMockClient();
-    const hooks = await SecretRedactor({ client } as never);
-    const chatHook = hooks["chat.message"] as (
-      input: Record<string, unknown>,
-      output: { parts: Array<{ type: string; text?: string }> },
-    ) => Promise<void>;
+  it("redacts every tool output and outbound history", async () => {
+    const { hooks: loaded } = await hooks();
+    const output = { output: github };
+    await loaded["tool.execute.after"]?.(
+      { sessionID: "s1", tool: "glob" } as never,
+      output as never,
+    );
+    expect(output.output).toMatch(/^🔒github_pat_\d+🔓$/);
 
-    const parts = [{ type: "text", text: "my token is ghp_R8z3kL9mN2pQ5tV7wX0yB4dF6hJ1oS3uA8cE" }];
+    const messages = [{ info: { sessionID: "s1" }, parts: [{ type: "text", text: github }] }];
+    await loaded["experimental.chat.messages.transform"]?.({} as never, { messages } as never);
+    expect(messages[0].parts[0].text).toMatch(/^🔒github_pat_\d+🔓$/);
+  });
 
-    await chatHook({}, { parts } as never);
+  it("does not restore a token from another session", async () => {
+    const { hooks: loaded } = await hooks();
+    const parts = [{ type: "text", text: github }];
+    await loaded["chat.message"]?.({ sessionID: "s1" } as never, { parts } as never);
+    const args = { command: parts[0].text };
+    await loaded["tool.execute.before"]?.(
+      { sessionID: "s2", tool: "bash" } as never,
+      { args } as never,
+    );
+    expect(args.command).toBe(parts[0].text);
+  });
 
-    expect(client.tui.showToast).toHaveBeenCalledWith({
-      body: {
-        message: expect.stringContaining("Redacted 1 secret(s) from chat"),
-        variant: "warning",
-      },
+  it("adds the placeholder instruction once", async () => {
+    const { hooks: loaded } = await hooks();
+    const output = { system: ["base"] };
+    const hook = loaded["experimental.chat.system.transform"];
+    await hook?.({} as never, output as never);
+    await hook?.({} as never, output as never);
+    expect(output.system.filter((line) => line.includes("opaque local tokens"))).toHaveLength(1);
+  });
+
+  it("clears mappings when a session is deleted and when the plugin is disposed", async () => {
+    const { hooks: loaded } = await hooks();
+    const parts = [{ type: "text", text: github }];
+    await loaded["chat.message"]?.({ sessionID: "s1" } as never, { parts } as never);
+    const token = parts[0].text ?? "";
+    await loaded.event?.({
+      event: { type: "session.deleted", properties: { info: { id: "s1" } } },
+    } as never);
+    const args = { command: token };
+    await loaded["tool.execute.before"]?.(
+      { sessionID: "s1", tool: "bash" } as never,
+      { args } as never,
+    );
+    expect(args.command).toBe(token);
+
+    const again = [{ type: "text", text: github }];
+    await loaded["chat.message"]?.({ sessionID: "s2" } as never, { parts: again } as never);
+    await loaded.dispose?.();
+    const disposed = { text: again[0].text ?? "" };
+    await loaded["experimental.text.complete"]?.({ sessionID: "s2" } as never, disposed as never);
+    expect(disposed.text).toMatch(/^🔒/);
+  });
+
+  it("does not resolve or create a scanner when the mode is disabled", async () => {
+    const resolveScanner = vi.fn(async () => "/bin/betterleaks");
+    const createScanner = vi.fn(async () => scanner());
+    const server = createServer({
+      resolveScanner,
+      createScanner,
+      loadEnv: async () => [{ category: "env_token", value: "env-secret-value", source: "env" }],
+      worktree: "/tmp",
+      configPath: new URL("../secret-redactor.default.json", import.meta.url).pathname,
     });
+    const loaded = await server(
+      { client: client(), directory: "/tmp", worktree: "/tmp" } as never,
+      { scannerMode: "disabled" },
+    );
+    expect(resolveScanner).not.toHaveBeenCalled();
+    expect(createScanner).not.toHaveBeenCalled();
+    const parts = [{ type: "text", text: "keep env-secret-value here" }];
+    await loaded["chat.message"]?.({ sessionID: "s1" } as never, { parts } as never);
+    expect(parts[0].text).toBe("keep 🔒env_token_1🔓 here");
   });
 
-  it("redacts JWT in bash tool output", async () => {
-    const client = createMockClient();
-    const hooks = await SecretRedactor({ client } as never);
-    const afterHook = hooks["tool.execute.after"] as (
-      input: Record<string, unknown>,
-      output: Record<string, unknown>,
-    ) => Promise<void>;
-
-    const jwt =
-      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyIjoiZmFrZSJ9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
-    const output = { output: `token: ${jwt}` };
-
-    await afterHook({ tool: "bash" }, output);
-
-    expect(output.output).toMatch(/^token: 🔒jwt_\d+🔓$/);
-  });
-
-  it("fires a toast when secrets are redacted in tool output", async () => {
-    const client = createMockClient();
-    const hooks = await SecretRedactor({ client } as never);
-    const afterHook = hooks["tool.execute.after"] as (
-      input: Record<string, unknown>,
-      output: Record<string, unknown>,
-    ) => Promise<void>;
-
-    const jwt =
-      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyIjoiZmFrZSJ9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
-    await afterHook({ tool: "bash" }, { output: jwt });
-
-    expect(client.tui.showToast).toHaveBeenCalledWith({
-      body: {
-        message: expect.stringContaining("Redacted 1 secret(s) from bash"),
-        variant: "warning",
-      },
+  it("keeps a whitelisted env value and still redacts another copy", async () => {
+    const resolveScanner = vi.fn(async () => "/bin/betterleaks");
+    const server = createServer({
+      resolveScanner,
+      createScanner: async () => scanner(),
+      loadEnv: async () => [{ category: "env_token", value: "env-secret-value", source: "env" }],
+      worktree: "/tmp",
+      configPath: new URL("../secret-redactor.default.json", import.meta.url).pathname,
     });
-  });
-
-  it("unredacts tokens in bash tool args before execution", async () => {
-    const client = createMockClient();
-    const hooks = await SecretRedactor({ client } as never);
-    const afterHook = hooks["tool.execute.after"] as (
-      input: Record<string, unknown>,
-      output: Record<string, unknown>,
-    ) => Promise<void>;
-    const beforeHook = hooks["tool.execute.before"] as (
-      input: Record<string, unknown>,
-      output: Record<string, unknown>,
-    ) => Promise<void>;
-
-    // First redact a JWT via tool output
-    const jwt =
-      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyIjoiZmFrZSJ9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
-    const toolOutput = { output: jwt };
-    await afterHook({ tool: "bash" }, toolOutput);
-
-    // Extract the redacted label
-    const redactedToken = toolOutput.output as string;
-
-    // Then use the redacted token in a command
-    const args = { command: `curl -H 'Bearer ${redactedToken}'` };
-    await beforeHook({ tool: "bash" }, { args });
-
-    expect(args.command).toBe(`curl -H 'Bearer ${jwt}'`);
-  });
-
-  it("skips tools not in scope", async () => {
-    const client = createMockClient();
-    const hooks = await SecretRedactor({ client } as never);
-    const afterHook = hooks["tool.execute.after"] as (
-      input: Record<string, unknown>,
-      output: Record<string, unknown>,
-    ) => Promise<void>;
-
-    const jwt =
-      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyIjoiZmFrZSJ9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
-    const output = { output: jwt };
-
-    await afterHook({ tool: "glob" }, output);
-
-    expect(output.output).toBe(jwt);
-  });
-
-  it("handles null/undefined output gracefully", async () => {
-    const client = createMockClient();
-    const hooks = await SecretRedactor({ client } as never);
-    const afterHook = hooks["tool.execute.after"] as (
-      input: Record<string, unknown>,
-      output: Record<string, unknown>,
-    ) => Promise<void>;
-
-    await afterHook({ tool: "bash" }, { output: undefined });
-    await afterHook({ tool: "bash" }, { output: null });
-
-    // Should not throw
-    expect(client.tui.showToast).not.toHaveBeenCalled();
-  });
-
-  it("redacts secrets in experimental.chat.messages.transform", async () => {
-    const client = createMockClient();
-    const hooks = await SecretRedactor({ client } as never);
-    const transformHook = hooks["experimental.chat.messages.transform"] as (
-      input: Record<string, unknown>,
-      output: {
-        messages: Array<{
-          info: Record<string, unknown>;
-          parts: Array<{ type: string; text?: string }>;
-        }>;
-      },
-    ) => Promise<void>;
-
-    const messages = [
+    const loaded = await server(
+      { client: client(), directory: "/tmp", worktree: "/tmp" } as never,
       {
-        info: { role: "user" },
-        parts: [{ type: "text", text: "my key is ghp_R8z3kL9mN2pQ5tV7wX0yB4dF6hJ1oS3uA8cE" }],
+        scannerMode: "disabled",
+        whitelist: [
+          {
+            id: "allow_env",
+            label: "allow_env",
+            regex: "keep (env-secret-value)",
+            flags: "",
+            captureGroup: 1,
+          },
+        ],
       },
-      {
-        info: { role: "assistant" },
-        parts: [{ type: "text", text: "no secrets here" }],
-      },
-    ];
-
-    await transformHook({}, { messages } as never);
-
-    expect(messages[0].parts[0].text).toMatch(/^my key is 🔒github_pat_\d+🔓$/);
-    expect(messages[1].parts[0].text).toBe("no secrets here");
+    );
+    const parts = [{ type: "text", text: "keep env-secret-value and hide env-secret-value" }];
+    await loaded["chat.message"]?.({ sessionID: "s1" } as never, { parts } as never);
+    expect(parts[0].text).toBe("keep env-secret-value and hide 🔒env_token_1🔓");
+    expect(resolveScanner).not.toHaveBeenCalled();
   });
 
-  it("fires a toast when secrets are redacted in messages.transform", async () => {
-    const client = createMockClient();
-    const hooks = await SecretRedactor({ client } as never);
-    const transformHook = hooks["experimental.chat.messages.transform"] as (
-      input: Record<string, unknown>,
-      output: {
-        messages: Array<{
-          info: Record<string, unknown>;
-          parts: Array<{ type: string; text?: string }>;
-        }>;
+  it("blocks startup when Betterleaks is required and unavailable", async () => {
+    const server = createServer({
+      resolveScanner: async () => {
+        throw new Error("missing");
       },
-    ) => Promise<void>;
-
-    const messages = [
-      {
-        info: { role: "user" },
-        parts: [{ type: "text", text: "ghp_R8z3kL9mN2pQ5tV7wX0yB4dF6hJ1oS3uA8cE" }],
-      },
-    ];
-
-    await transformHook({}, { messages } as never);
-
-    expect(client.tui.showToast).toHaveBeenCalledWith({
-      body: {
-        message: expect.stringContaining("Redacted 1 secret(s) from LLM context"),
-        variant: "warning",
-      },
+      loadEnv: async () => [],
     });
+    await expect(
+      server({ client: client(), directory: "/tmp", worktree: "/tmp" } as never),
+    ).rejects.toThrow(/Betterleaks is required/);
   });
 });
