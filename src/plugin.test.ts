@@ -9,7 +9,7 @@ function client() {
 }
 
 function scanner(): SecretScanner {
-  return { version: "1.8.1", scan: vi.fn(async () => []) };
+  return { version: "1.8.1", scan: vi.fn(async () => []), dispose: vi.fn(async () => {}) };
 }
 
 async function hooks(options: Record<string, unknown> = {}) {

@@ -11,19 +11,23 @@ Do not commit a home `secret-redactor.json`, project
 
 ## Layout
 
-- `src/plugin.ts` — Kilo `{ id, server }` module and hooks.
-- `src/user-config.ts` — loads `secret-redactor.default.json`,
-  then `~/.config/kilo/secret-redactor.json`,
-  then Kilo tuple overrides.
-- `src/patterns.ts` — rule schema and comments for adding
-  JSON rules. Runtime rules are not the old in-source array.
-- `src/detector.ts` — global regex match with capture-group
-  spans.
+- `src/version.ts` — package `VERSION` constant matching `package.json`.
+- `src/plugin.ts` — Kilo `{ id, server }` module and hooks, workspace root
+  resolution, and lifecycle `dispose`.
+- `src/user-config.ts` — loads packaged defaults relative to package module,
+  then `~/.config/kilo/secret-redactor.json`, then Kilo tuple overrides using
+  partial layer merging (`parsePartialOptions`).
+- `src/patterns.ts` — rule schema, validation, and engine-derived capture-group
+  counting (`captureGroupCount`).
+- `src/detector.ts` — global regex match with capture-group spans.
 - `src/redactor.ts` — stage order, masking, span replacement.
-- `src/secret-scanner.ts` — Betterleaks stdin adapter.
-  No `--validation`, no decode, no archive scan,
-  no project config.
-- `src/env-values.ts` — exact values from worktree-root `.env*`.
+- `src/secret-scanner.ts` — Betterleaks stdin adapter. Reuses a single private
+  neutral directory per scanner instance (`0700`), cleans up via `dispose()`,
+  handles stdin pipe errors, retries once on missing cwd. No `--validation`,
+  no decode, no archive scan, no project config.
+- `src/env-values.ts` — exact values from worktree-root `.env*`. Regular files
+  only (`isFile()`), capped at 512 KiB (`MAX_ENV_FILE_BYTES`), warning on
+  group/world readability.
 - `src/spans.ts` — UTF-16 span merge, mask, and replacement.
 - `src/vault.ts` — in-memory per-session map.
 - `scripts/bench-hot-path.mjs` — local hot-path benchmark.

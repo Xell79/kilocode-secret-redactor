@@ -49,7 +49,9 @@ type PluginInputClient = Parameters<PluginModule["server"]>[0]["client"];
 export function createServer(serverOptions: ServerOptions = {}) {
   const server: PluginModule["server"] = async (input, rawOptions) => {
     const options = await loadUserConfig(rawOptions, { configPath: serverOptions.configPath });
-    const worktree = serverOptions.worktree ?? input.directory;
+    // `directory` is the session cwd, which may be a subdirectory; env files
+    // and relative envFiles paths resolve from the workspace root.
+    const worktree = serverOptions.worktree ?? input.worktree ?? input.directory;
     let scanner: SecretScanner | undefined;
     if (options.scannerMode !== "disabled")
       try {
@@ -72,6 +74,7 @@ export function createServer(serverOptions: ServerOptions = {}) {
       envFiles: options.envFiles,
       minValueLength: options.minValueLength,
       strict: options.scannerMode === "required",
+      warn: (message) => log(input.client, message),
     });
     const sessions = new Map<string, SessionState>();
     const envValues = envFindings.map((finding) => ({
@@ -172,6 +175,7 @@ export function createServer(serverOptions: ServerOptions = {}) {
       },
       dispose: async () => {
         for (const sessionID of [...sessions.keys()]) clearSession(sessionID);
+        await scanner?.dispose();
       },
     };
 
@@ -187,6 +191,7 @@ export function createServer(serverOptions: ServerOptions = {}) {
 }
 
 export const server = createServer();
+export { VERSION } from "./version.js";
 
 const plugin: PluginModule = {
   id: "kilocode-secret-redactor",

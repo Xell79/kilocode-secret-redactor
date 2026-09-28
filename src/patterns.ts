@@ -96,12 +96,21 @@ export function parseRule(value: unknown, index: number): PatternRule {
     throw new PatternConfigError(`rule ${id} has an invalid capture group`);
   }
   const rule = { id, label, regex: value.regex, flags, captureGroup };
-  const compiled = matcherFor(rule);
-  const groups = compiled.source.match(/\((?!\?)/g);
-  if (captureGroup > (groups ? groups.length : 0)) {
+  if (captureGroup > captureGroupCount(rule.regex)) {
     throw new PatternConfigError(`rule ${id} capture group does not exist`);
   }
+  matcherFor(rule);
   return rule;
+}
+
+/**
+ * Number of capturing groups, counted by the engine rather than the source.
+ * A source scan miscounts named groups `(?<name>…)`, escaped `\(` and
+ * parentheses inside a character class.
+ */
+function captureGroupCount(source: string): number {
+  const probe = new RegExp(`${source}|`).exec("");
+  return (probe?.length ?? 1) - 1;
 }
 
 export function assertRuleList(rules: readonly PatternRule[]): void {

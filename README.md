@@ -70,8 +70,12 @@ Most settings belong in
 plugin tuple. Copy `secret-redactor.default.json`
 there and edit it. The plugin does not create or
 overwrite that file. If it is missing, the packaged
-defaults are used. Kilo tuple options override the
-JSON for the same keys.
+defaults are used. Configuration merges in three layers:
+packaged defaults, overridden by `~/.config/kilo/secret-redactor.json`,
+overridden by Kilo tuple options. Partial layers preserve lower
+values (e.g. omitted fields in tuple options do not reset user-file settings).
+Explicitly passing an empty list (such as `"disabledTypes": []`) clears
+the disabled types instead of being ignored.
 
 ```json
 {
@@ -106,8 +110,12 @@ the blacklist win overlaps.
 Blacklist rules and exact values from root `.env*` files
 redact. Whitelist rules pass their spans through
 unchanged, including to the provider. `.env.example`,
-`.env.sample`, and `.env.template` are skipped. `url`,
-`ip_address`, and `ssh_public_key` are disabled by
+`.env.sample`, and `.env.template` are skipped.
+Env files must be regular files and are capped at 512 KiB
+to prevent resource exhaustion. Group- or world-readable
+env files produce a warning in the log without exposing
+content. Symlinks pointing outside the workspace root
+are rejected. `url`, `ip_address`, and `ssh_public_key` are disabled by
 default. Private keys stay enabled.
 
 Add a rule to the JSON. See the comment at the top of
@@ -115,10 +123,14 @@ Add a rule to the JSON. See the comment at the top of
 not need a rebuild. Each `regex` is limited to 500
 characters. That bound is the load-time guard against
 catastrophic backtracking; it is not a full
-regex-complexity proof. Rejected patterns fail startup
-and are not executed.
+regex-complexity proof. Capture group count is determined
+via the JavaScript regex engine, supporting named groups
+and properly ignoring non-capturing syntax or character
+classes. Rejected patterns fail startup and are not executed.
 
-Repository `.betterleaks.toml`, `.gitleaks.toml`, and
+Betterleaks scans run in an isolated neutral working directory
+(mode `0700`) created once per scanner instance and cleaned up on
+plugin `dispose`. Repository `.betterleaks.toml`, `.gitleaks.toml`, and
 `BETTERLEAKS_CONFIG*` / `GITLEAKS_CONFIG*` are ignored.
 
 ## Uninstall

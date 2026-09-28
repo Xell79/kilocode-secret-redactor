@@ -1,16 +1,28 @@
+# Dependencies and build output
 node_modules/
 dist/
 *.tsbuildinfo
+
+# Environment files and secret configs
 .env
 .env.*
 !.env.example
 secret-redactor.json
 ses_*.json
+.npmrc
+.envrc
+
+# Testing and coverage
+coverage/
+*.log
+.vitest/
+
+# Tool and language caches
 .ruff_cache/
 .rumdl_cache/
 .codegraph/
-.npmrc
-.envrc
+
+# Kilo internals
 .kilo/node_modules/
 .kilo/package.json
 .kilo/package-lock.json
@@ -18,3 +30,17 @@ ses_*.json
 .kilo/bun.lock
 .kilo/yarn.lock
 .kilo/agent-manager.json
+
+# Local Betterleaks binary downloads (from manual installation)
+betterleaks
+betterleaks_*
+checksums.txt
+
+# Editor and OS metadata
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

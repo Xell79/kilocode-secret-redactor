@@ -6,6 +6,7 @@ export const DEFAULT_MAX_MAPPINGS = 10_000;
 export const DEFAULT_SCAN_CACHE_SIZE = 256;
 export const MAX_SCAN_INPUT_CHARS = 1_000_000;
 export const MAX_SCAN_OUTPUT_CHARS = 2_000_000;
+export const MAX_ENV_FILE_BYTES = 512 * 1024;
 export const MIN_BETTERLEAKS_VERSION = "1.8.1";
 export const UNREDACT_ARGS_TOOLS = ["bash", "write", "edit"] as const;
 export const DEFAULT_DISABLED_TYPES = ["url", "ip_address", "ssh_public_key"] as const;
@@ -58,10 +59,64 @@ export class PluginConfigError extends Error {
   }
 }
 
+export type PartialPluginOptions = {
+  -readonly [K in keyof PluginOptions]?: PluginOptions[K];
+};
+
+const OPTION_KEYS = [
+  "scannerMode",
+  "betterleaksPath",
+  "scannerTimeoutMs",
+  "envFiles",
+  "autoEnvFiles",
+  "minValueLength",
+  "disabledTypes",
+  "disabledScannerRules",
+  "unredactTools",
+  "maxMappings",
+  "scanCacheSize",
+] as const satisfies readonly (keyof PluginOptions)[];
+
+/**
+ * Validate only the keys a layer actually sets. Absent keys stay absent so a
+ * higher layer (user file, Kilo tuple) cannot reset a lower layer to defaults.
+ */
+export function parsePartialOptions(
+  raw: Record<string, unknown> | undefined,
+): PartialPluginOptions {
+  if (!raw) return {};
+  const partial: PartialPluginOptions = {};
+  if ("scannerMode" in raw) partial.scannerMode = readMode(raw.scannerMode, false);
+  if ("betterleaksPath" in raw)
+    partial.betterleaksPath = readOptionalString(raw.betterleaksPath, "betterleaksPath");
+  if ("scannerTimeoutMs" in raw) {
+    partial.scannerTimeoutMs = readPositiveInt(raw.scannerTimeoutMs, 0, "scannerTimeoutMs");
+  }
+  if ("envFiles" in raw) partial.envFiles = readStringArray(raw.envFiles, "envFiles");
+  if ("autoEnvFiles" in raw)
+    partial.autoEnvFiles = readBoolean(raw.autoEnvFiles, false, "autoEnvFiles");
+  if ("minValueLength" in raw)
+    partial.minValueLength = readPositiveInt(raw.minValueLength, 0, "minValueLength");
+  if ("disabledTypes" in raw)
+    partial.disabledTypes = normalizeSet(readStringArray(raw.disabledTypes, "disabledTypes"));
+  if ("disabledScannerRules" in raw) {
+    partial.disabledScannerRules = normalizeSet(
+      readStringArray(raw.disabledScannerRules, "disabledScannerRules"),
+    );
+  }
+  if ("unredactTools" in raw)
+    partial.unredactTools = new Set(readStringArray(raw.unredactTools, "unredactTools"));
+  if ("maxMappings" in raw)
+    partial.maxMappings = readPositiveInt(raw.maxMappings, 0, "maxMappings");
+  if ("scanCacheSize" in raw)
+    partial.scanCacheSize = readPositiveInt(raw.scanCacheSize, 0, "scanCacheSize");
+  return partial;
+}
+
 export function parseOptions(raw: Record<string, unknown> | undefined): PluginOptions {
   const input = raw ?? {};
   return {
-    scannerMode: readMode(input.scannerMode),
+    scannerMode: readMode(input.scannerMode, true),
     betterleaksPath: readOptionalString(input.betterleaksPath, "betterleaksPath"),
     scannerTimeoutMs: readPositiveInt(
       input.scannerTimeoutMs,
@@ -85,8 +140,21 @@ export function parseOptions(raw: Record<string, unknown> | undefined): PluginOp
   };
 }
 
-function readMode(value: unknown): "required" | "optional" | "disabled" {
-  if (value === undefined) return "required";
+export function mergeOptions(
+  base: PluginOptions,
+  ...layers: readonly PartialPluginOptions[]
+): PluginOptions {
+  const merged: PluginOptions = { ...base };
+  for (const layer of layers) {
+    for (const key of OPTION_KEYS) {
+      if (layer[key] !== undefined) Object.assign(merged, { [key]: layer[key] });
+    }
+  }
+  return merged;
+}
+
+function readMode(value: unknown, fallback: boolean): "required" | "optional" | "disabled" {
+  if (value === undefined && fallback) return "required";
   if (value === "required" || value === "optional" || value === "disabled") return value;
   throw new PluginConfigError('scannerMode must be "required", "optional", or "disabled"');
 }

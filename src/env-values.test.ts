@@ -1,9 +1,9 @@
-import { mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { PluginConfigError } from "./config.js";
-import { loadEnvFindings } from "./env-values.js";
+import { MAX_ENV_FILE_BYTES, PluginConfigError } from "./config.js";
+import { discoverRootEnvFiles, loadEnvFindings } from "./env-values.js";
 
 async function fixture(): Promise<string> {
   return mkdtemp(join(tmpdir(), "env-values-"));
@@ -46,6 +46,69 @@ describe("loadEnvFindings", () => {
         strict: true,
       }),
     ).rejects.toBeInstanceOf(PluginConfigError);
+  });
+
+  it("returns nothing for an unreadable worktree unless strict", async () => {
+    const missing = join(await fixture(), "absent");
+    await expect(discoverRootEnvFiles(missing, false)).resolves.toEqual([]);
+    await expect(discoverRootEnvFiles(missing, true)).rejects.toBeInstanceOf(PluginConfigError);
+  });
+
+  it("skips a directory configured as an env file", async () => {
+    const root = await fixture();
+    await expect(
+      loadEnvFindings(root, {
+        autoEnvFiles: false,
+        envFiles: ["."],
+        minValueLength: 8,
+        strict: false,
+      }),
+    ).resolves.toEqual([]);
+    await expect(
+      loadEnvFindings(root, {
+        autoEnvFiles: false,
+        envFiles: ["."],
+        minValueLength: 8,
+        strict: true,
+      }),
+    ).rejects.toBeInstanceOf(PluginConfigError);
+  });
+
+  it("skips an env file above the size limit", async () => {
+    const root = await fixture();
+    await writeFile(join(root, ".env"), `TOKEN=${"a".repeat(MAX_ENV_FILE_BYTES)}\n`);
+    const options = { autoEnvFiles: true, envFiles: [], minValueLength: 8 };
+    await expect(loadEnvFindings(root, { ...options, strict: false })).resolves.toEqual([]);
+    await expect(loadEnvFindings(root, { ...options, strict: true })).rejects.toBeInstanceOf(
+      PluginConfigError,
+    );
+  });
+
+  it("warns when an env file is readable by group or others", async () => {
+    const root = await fixture();
+    const path = join(root, ".env");
+    await writeFile(path, "TOKEN=group-readable-secret\n");
+    await chmod(path, 0o644);
+    const warnings: string[] = [];
+    const findings = await loadEnvFindings(root, {
+      autoEnvFiles: true,
+      envFiles: [],
+      minValueLength: 8,
+      strict: true,
+      warn: (message) => warnings.push(message),
+    });
+    expect(findings.map((item) => item.value)).toEqual(["group-readable-secret"]);
+    expect(warnings).toEqual(["env file is readable by group or others"]);
+    await chmod(path, 0o600);
+    warnings.length = 0;
+    await loadEnvFindings(root, {
+      autoEnvFiles: true,
+      envFiles: [],
+      minValueLength: 8,
+      strict: true,
+      warn: (message) => warnings.push(message),
+    });
+    expect(warnings).toEqual([]);
   });
 
   it("rejects a symlink that resolves outside the worktree", async () => {

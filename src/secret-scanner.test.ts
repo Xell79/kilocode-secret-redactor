@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync } from "node:fs";
+import { access, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -6,11 +7,14 @@ import { SCAN_ARGS, SCANNER_CONFIG_ENV } from "./config.js";
 import {
   createBetterleaksScanner,
   isVersionAtLeast,
+  type ProcessRequest,
   type ProcessRunner,
   parseBetterleaksVersion,
   parseFindings,
+  resolveBetterleaks,
   SecretScannerError,
   sanitizedScannerEnv,
+  spawnProcess,
 } from "./secret-scanner.js";
 
 const runner = (result: Partial<Awaited<ReturnType<ProcessRunner>>>): ProcessRunner =>
@@ -86,6 +90,87 @@ describe("betterleaks adapter", () => {
     expect(
       findings.some((finding) => finding.value === token && finding.source === "betterleaks"),
     ).toBe(true);
+  });
+
+  it("reuses one working directory for every scan and releases it once", async () => {
+    const dirs: string[] = [];
+    const calls = vi.fn<ProcessRunner>().mockImplementation(async (request: ProcessRequest) => ({
+      stdout: request.args[0] === "version" ? "1.8.1" : "[]",
+      stderr: "",
+      exitCode: 0,
+      timedOut: false,
+      truncated: false,
+    }));
+    const scanner = await createBetterleaksScanner("/bin/betterleaks", 1000, calls, async () => {
+      const dir = mkdtempSync(join(tmpdir(), "scanner-reuse-"));
+      dirs.push(dir);
+      return dir;
+    });
+    await scanner.scan("one", new Set());
+    await scanner.scan("two", new Set());
+    expect(dirs).toHaveLength(1);
+    expect(calls.mock.calls.map((call) => call[0].cwd)).toEqual([dirs[0], dirs[0], dirs[0]]);
+    await access(dirs[0]);
+    await scanner.dispose();
+    await scanner.dispose();
+    await expect(access(dirs[0])).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("recreates the working directory once when a scan finds it gone", async () => {
+    const dirs: string[] = [];
+    const missing = Object.assign(new Error("cwd vanished"), { code: "ENOENT" });
+    let scans = 0;
+    const calls = vi.fn<ProcessRunner>().mockImplementation(async (request: ProcessRequest) => {
+      if (request.args[0] !== "version") scans += 1;
+      if (scans === 1) throw missing;
+      return {
+        stdout: request.args[0] === "version" ? "1.8.1" : "[]",
+        stderr: "",
+        exitCode: 0,
+        timedOut: false,
+        truncated: false,
+      };
+    });
+    const scanner = await createBetterleaksScanner("/bin/betterleaks", 1000, calls, async () => {
+      const dir = mkdtempSync(join(tmpdir(), "scanner-retry-"));
+      dirs.push(dir);
+      return dir;
+    });
+    await expect(scanner.scan("text", new Set())).resolves.toEqual([]);
+    expect(dirs).toHaveLength(2);
+
+    scans = 0;
+    calls.mockImplementation(async () => {
+      scans += 1;
+      throw missing;
+    });
+    await expect(scanner.scan("text", new Set())).rejects.toBe(missing);
+    await scanner.dispose();
+    await Promise.all(dirs.map((dir) => rm(dir, { recursive: true, force: true })));
+  });
+
+  it("rejects a directory even when it is executable", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "scanner-dir-"));
+    await expect(resolveBetterleaks(dir)).rejects.toBeInstanceOf(SecretScannerError);
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("ignores relative PATH entries when resolving the scanner", async () => {
+    await expect(resolveBetterleaks(undefined, { PATH: ".:./bin:" })).rejects.toBeInstanceOf(
+      SecretScannerError,
+    );
+  });
+
+  it("reports a spawn failure instead of crashing", async () => {
+    const request: ProcessRequest = {
+      command: join(tmpdir(), "kilocode-secret-redactor-missing-binary"),
+      args: [],
+      input: "text",
+      timeoutMs: 1000,
+      cwd: tmpdir(),
+      env: {},
+    };
+    await expect(spawnProcess(request)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("rejects malformed findings", () => {

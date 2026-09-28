@@ -3,6 +3,8 @@ import { redactDeep, redactString, type ScanContext, unredactDeep } from "./reda
 import type { SecretScanner } from "./secret-scanner.js";
 import { createVault } from "./vault.js";
 
+const idle: Pick<SecretScanner, "dispose"> = { dispose: async () => {} };
+
 function context(scanner: SecretScanner, mode: "required" | "optional" = "required"): ScanContext {
   return {
     scanner,
@@ -129,6 +131,7 @@ describe("scanner integration", () => {
   it("merges a Betterleaks finding ahead of a generic builtin label", async () => {
     const scanner: SecretScanner = {
       version: "1.8.1",
+      ...idle,
       scan: vi.fn(async () => [
         { category: "github-pat", value: "ghp_from_scanner_value", source: "betterleaks" as const },
       ]),
@@ -144,6 +147,7 @@ describe("scanner integration", () => {
   it("continues after scanner failure only in optional mode", async () => {
     const scanner: SecretScanner = {
       version: "1.8.1",
+      ...idle,
       scan: vi.fn(async () => {
         throw new Error("scanner down");
       }),
@@ -160,6 +164,7 @@ describe("scanner integration", () => {
     let calls = 0;
     const scanner: SecretScanner = {
       version: "1.8.1",
+      ...idle,
       scan: vi.fn(async () => {
         calls += 1;
         if (calls === 1) throw new Error("scanner down");

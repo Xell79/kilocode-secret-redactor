@@ -1,12 +1,13 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { MAX_REGEX_LENGTH, matcherFor, PatternConfigError, parseRule } from "./patterns.js";
 import { redactString, type ScanContext } from "./redactor.js";
 import type { SecretScanner } from "./secret-scanner.js";
-import { kiloConfigDir, loadUserConfig } from "./user-config.js";
+import { kiloConfigDir, loadUserConfig, packagedConfig } from "./user-config.js";
 import { createVault } from "./vault.js";
+import { VERSION } from "./version.js";
 
 const email = {
   id: "email",
@@ -73,7 +74,7 @@ describe("stage order", () => {
         },
       ];
     });
-    const scanner: SecretScanner = { version: "1.8.1", scan };
+    const scanner: SecretScanner = { version: "1.8.1", scan, dispose: async () => {} };
     const text =
       "keep jane.doe@example.com token ghp_R8z3kL9mN2pQ5tV7wX0yB4dF6hJ1oS3uA8cE tail xoxb-other-secret-value";
     const result = await redactString(
@@ -234,6 +235,18 @@ describe("stage order", () => {
 });
 
 describe("user config", () => {
+  it("resolves the packaged default config regardless of process.cwd()", () => {
+    const originalCwd = process.cwd();
+    try {
+      process.chdir(tmpdir());
+      const config = packagedConfig();
+      expect(config.blacklist.length).toBeGreaterThan(0);
+      expect(config.order).toEqual(["whitelist", "blacklist", "betterleaks"]);
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+
   it("resolves the kilo config directory and falls back when the user file is missing", async () => {
     expect(kiloConfigDir({ KILO_CONFIG_DIR: "/tmp/kilo-a" })).toBe("/tmp/kilo-a");
     expect(kiloConfigDir({ XDG_CONFIG_HOME: "/tmp/xdg" })).toBe("/tmp/xdg/kilo");
@@ -266,6 +279,16 @@ describe("user config", () => {
     ).rejects.toThrow(/invalid/);
     expect(() => parseRule({ ...email, flags: "g" }, 0)).toThrow(PatternConfigError);
     expect(() => parseRule({ ...email, captureGroup: 3 }, 0)).toThrow(/capture group/);
+    expect(
+      parseRule({ id: "named", regex: "(?<secret>[A-Za-z0-9]{10,})", captureGroup: 1 }, 0)
+        .captureGroup,
+    ).toBe(1);
+    expect(() =>
+      parseRule({ id: "escaped", regex: "\\([A-Za-z0-9]{10,}\\)", captureGroup: 1 }, 0),
+    ).toThrow(/capture group/);
+    expect(() =>
+      parseRule({ id: "class", regex: "[()][A-Za-z0-9]{10,}", captureGroup: 1 }, 0),
+    ).toThrow(/capture group/);
     expect(() => parseRule({ ...email, extra: true }, 0)).toThrow(/unknown field/);
     expect(() => parseRule({ ...email, regex: "a".repeat(MAX_REGEX_LENGTH + 1) }, 0)).toThrow(
       /invalid regular expression/,
@@ -289,6 +312,32 @@ describe("user config", () => {
           }),
       }),
     ).rejects.toThrow(/invalid/);
+  });
+
+  it("keeps user-file settings when the plugin passes no overrides", async () => {
+    const file = JSON.stringify({
+      scannerMode: "disabled",
+      minValueLength: 32,
+      disabledTypes: ["custom_type"],
+      order: ["betterleaks", "blacklist", "whitelist"],
+      whitelist: [],
+      blacklist: [email],
+    });
+    for (const overrides of [undefined, {}]) {
+      const loaded = await loadUserConfig(overrides, {
+        configPath: "/cfg",
+        read: async () => file,
+      });
+      expect(loaded.scannerMode).toBe("disabled");
+      expect(loaded.minValueLength).toBe(32);
+      expect([...loaded.disabledTypes]).toEqual(["custom_type"]);
+      expect(loaded.order[0]).toBe("betterleaks");
+    }
+    const cleared = await loadUserConfig(
+      { disabledTypes: [] },
+      { configPath: "/cfg", read: async () => file },
+    );
+    expect(cleared.disabledTypes.size).toBe(0);
   });
 
   it("lets tuple options override the user file", async () => {
@@ -353,5 +402,12 @@ describe("user config", () => {
         read: async () => "{",
       }),
     ).rejects.toThrow(/invalid/);
+  });
+
+  it("exports the current package version matching package.json", async () => {
+    const pkgPath = new URL("../package.json", import.meta.url);
+    const pkg = JSON.parse(await readFile(pkgPath, "utf8")) as { version: string };
+    expect(VERSION).toBe(pkg.version);
+    expect(VERSION).toMatch(/^\d+\.\d+\.\d+$/);
   });
 });

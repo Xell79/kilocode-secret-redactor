@@ -22,3 +22,4 @@ export {
 export { maskOccupied } from "./spans.js";
 export { kiloConfigDir, loadUserConfig } from "./user-config.js";
 export { createVault, type SecretVault, VaultCapacityError } from "./vault.js";
+export { VERSION } from "./version.js";

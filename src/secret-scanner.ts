@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
 import { constants } from "node:fs";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, isAbsolute, join } from "node:path";
 import {
   MAX_SCAN_OUTPUT_CHARS,
   MIN_BETTERLEAKS_VERSION,
@@ -40,6 +40,8 @@ export type ProcessRunner = (request: ProcessRequest) => Promise<ProcessResult>;
 export interface SecretScanner {
   readonly version: string;
   scan(text: string, disabledRules: ReadonlySet<string>): Promise<Finding[]>;
+  /** Release the scanner's neutral working directory. Idempotent. */
+  dispose(): Promise<void>;
 }
 
 interface JsonFinding {
@@ -76,6 +78,9 @@ export async function resolveBetterleaks(
     return path;
   }
   for (const directory of (env.PATH ?? "").split(delimiter).filter(Boolean)) {
+    // A relative PATH entry (".", "./bin") resolves against process.cwd(),
+    // which lets the scanned repository supply the scanner binary.
+    if (!isAbsolute(directory)) continue;
     const candidate = join(directory, "betterleaks");
     try {
       await assertExecutable(candidate);
@@ -88,6 +93,10 @@ export async function resolveBetterleaks(
 }
 
 async function assertExecutable(path: string): Promise<void> {
+  const info = await stat(path).catch(() => undefined);
+  // Directories are executable by default, so X_OK alone accepts a directory
+  // named "betterleaks" and defers the failure to spawn (EISDIR/EACCES).
+  if (!info?.isFile()) throw new SecretScannerError("betterleaks executable is not accessible");
   try {
     await access(path, constants.X_OK);
   } catch {
@@ -137,6 +146,9 @@ export const spawnProcess: ProcessRunner = (request) =>
     child.on("close", (code) => {
       finish({ stdout, stderr, exitCode: code ?? -1, timedOut, truncated });
     });
+    // A failed spawn destroys stdin; without this handler the write below
+    // emits an unhandled 'error' and crashes the host process.
+    child.stdin.on("error", (error) => finish(error));
     child.stdin.end(request.input);
   });
 
@@ -146,7 +158,16 @@ export async function createBetterleaksScanner(
   runner: ProcessRunner = spawnProcess,
   workdirFactory: () => Promise<string> = createNeutralWorkdir,
 ): Promise<SecretScanner> {
-  const cwd = await workdirFactory();
+  // One directory for the scanner's whole lifetime. `betterleaks stdin` reads
+  // `.gitleaks.toml` and `.gitleaksignore` from its cwd, so the directory must
+  // stay empty and private; it is never per-scan and never the repository.
+  let cwd = await workdirFactory();
+  let disposed = false;
+  const release = async () => {
+    if (disposed) return;
+    disposed = true;
+    await rm(cwd, { recursive: true, force: true });
+  };
   try {
     const versionResult = await runner({
       command: executable,
@@ -163,36 +184,57 @@ export async function createBetterleaksScanner(
     if (!version || !isVersionAtLeast(version, MIN_BETTERLEAKS_VERSION)) {
       throw new SecretScannerError(`betterleaks ${MIN_BETTERLEAKS_VERSION} or newer is required`);
     }
+    const runScan = (text: string) =>
+      runner({
+        command: executable,
+        args: SCAN_ARGS,
+        input: text,
+        timeoutMs,
+        cwd,
+        env: sanitizedScannerEnv(process.env),
+      });
     return {
       version,
       async scan(text, disabledRules) {
-        const scanDir = await workdirFactory();
+        if (disposed) throw new SecretScannerError("betterleaks scanner was disposed");
+        let result: ProcessResult;
         try {
-          const result = await runner({
-            command: executable,
-            args: SCAN_ARGS,
-            input: text,
-            timeoutMs,
-            cwd: scanDir,
-            env: sanitizedScannerEnv(process.env),
-          });
-          if (result.timedOut) throw new SecretScannerError("betterleaks scan timed out");
-          if (result.truncated)
-            throw new SecretScannerError("betterleaks output exceeded the size limit");
-          if (result.exitCode !== 0) throw new SecretScannerError("betterleaks scan failed");
-          return parseFindings(result.stdout, disabledRules);
-        } finally {
-          await rm(scanDir, { recursive: true, force: true });
+          result = await runScan(text);
+        } catch (error) {
+          // A long-lived session can outlive the temp directory (tmp reaper).
+          if (!isMissingPath(error)) throw error;
+          cwd = await workdirFactory();
+          result = await runScan(text);
         }
+        if (result.timedOut) throw new SecretScannerError("betterleaks scan timed out");
+        if (result.truncated)
+          throw new SecretScannerError("betterleaks output exceeded the size limit");
+        if (result.exitCode !== 0) throw new SecretScannerError("betterleaks scan failed");
+        return parseFindings(result.stdout, disabledRules);
       },
+      dispose: release,
     };
-  } finally {
-    await rm(cwd, { recursive: true, force: true });
+  } catch (error) {
+    await release();
+    throw error;
   }
 }
 
+/**
+ * Private empty directory used as the scanner's cwd.
+ *
+ * `betterleaks stdin` calls `initConfig(".")`, so it loads
+ * `(cwd)/.gitleaks.toml` and, with an empty source, `(cwd)/.gitleaksignore`.
+ * A repository-controlled cwd could allowlist every finding; `tmpdir()` itself
+ * is world-writable, so only a fresh `0700` directory is safe. The directory
+ * holds no data: input travels on stdin and the report comes back on stdout.
+ */
 async function createNeutralWorkdir(): Promise<string> {
   return mkdtemp(join(tmpdir(), "kilocode-secret-redactor-"));
+}
+
+function isMissingPath(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 
 export function parseFindings(stdout: string, disabledRules: ReadonlySet<string>): Finding[] {

@@ -1,6 +1,6 @@
 {
   "name": "kilocode-secret-redactor",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Kilo plugin that redacts secrets and PII before model calls and restores them only for approved local tools",
   "type": "module",
   "main": "./dist/plugin.cjs",

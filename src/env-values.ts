@@ -1,7 +1,12 @@
-import { lstat, readdir, readFile, realpath } from "node:fs/promises";
+import { lstat, readdir, readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parse } from "dotenv";
-import { ENV_TEMPLATE_NAMES, PluginConfigError, SAMPLE_VALUE_PATTERN } from "./config.js";
+import {
+  ENV_TEMPLATE_NAMES,
+  MAX_ENV_FILE_BYTES,
+  PluginConfigError,
+  SAMPLE_VALUE_PATTERN,
+} from "./config.js";
 import type { Finding } from "./findings.js";
 
 export async function loadEnvFindings(
@@ -11,6 +16,7 @@ export async function loadEnvFindings(
     envFiles: readonly string[];
     minValueLength: number;
     strict: boolean;
+    warn?: (message: string) => void;
   },
 ): Promise<Finding[]> {
   const paths = new Set<string>();
@@ -23,6 +29,8 @@ export async function loadEnvFindings(
 
   const byValue = new Map<string, Finding>();
   for (const path of paths) {
+    const readable = await readableEnvFile(path, options.strict, options.warn);
+    if (!readable) continue;
     let content: string;
     try {
       content = await readFile(path, "utf8");
@@ -39,7 +47,11 @@ export async function loadEnvFindings(
 }
 
 export async function discoverRootEnvFiles(worktree: string, strict: boolean): Promise<string[]> {
-  const entries = await readdir(worktree, { withFileTypes: true });
+  const entries = await readdir(worktree, { withFileTypes: true }).catch((error: unknown) => {
+    if (strict) throw new PluginConfigError("unable to read worktree directory");
+    void error;
+    return [];
+  });
   const paths: string[] = [];
   for (const entry of entries) {
     if (!entry.name.startsWith(".env") || ENV_TEMPLATE_NAMES.has(entry.name)) continue;
@@ -59,12 +71,40 @@ async function resolveConfiguredPath(worktree: string, configured: string): Prom
   if (configured.includes("\0")) throw new PluginConfigError("envFiles contains an invalid path");
   const root = await realpath(resolve(worktree));
   const resolved = isAbsolute(configured) ? resolve(configured) : resolve(root, configured);
-  const real = await realpath(resolved).catch(() => resolved);
+  // Falling back to the unresolved path would let a dangling symlink or a
+  // permission error skip the containment check below.
+  const real = await realpath(resolved).catch(() => {
+    throw new PluginConfigError("unable to resolve an env file");
+  });
   const rel = relative(root, real);
   if (rel.startsWith("..") || isAbsolute(rel) || rel.split(sep).includes("..")) {
     throw new PluginConfigError("envFiles path escapes the worktree");
   }
   return real;
+}
+
+/**
+ * Reject anything that is not a regular file before reading it. A directory
+ * fails with EISDIR; a FIFO blocks `readFile` forever and hangs startup.
+ * Returns false when the file should be skipped.
+ */
+async function readableEnvFile(
+  path: string,
+  strict: boolean,
+  warn?: (message: string) => void,
+): Promise<boolean> {
+  const info = await stat(path).catch(() => undefined);
+  if (!info?.isFile()) {
+    if (strict) throw new PluginConfigError("env file is not a regular file");
+    return false;
+  }
+  if (info.size > MAX_ENV_FILE_BYTES) {
+    if (strict) throw new PluginConfigError("env file exceeds the size limit");
+    return false;
+  }
+  // The path only: never a value, a variable name, or a length.
+  if ((info.mode & 0o077) !== 0) warn?.("env file is readable by group or others");
+  return true;
 }
 
 function isSensitiveValue(value: string, minLength: number): boolean {
