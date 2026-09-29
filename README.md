@@ -197,18 +197,18 @@ A broader search for the service name also matches
 permission logs that merely quote earlier commands:
 
 ```bash
-rg 'level=WARN message="Redacted' ~/.local/share/kilo/log/opencode.log
+rg 'level=WARN .*message="Redacted' ~/.local/share/kilo/log/opencode.log
 ```
 
 `rg` has no follow mode. `-L` follows symlinks.
 To watch new lines, including across log rotation:
 
 ```bash
-tail -F ~/.local/share/kilo/log/opencode.log | rg --line-buffered 'level=WARN message="Redacted'
+tail -n 50 -F ~/.local/share/kilo/log/opencode.log | rg --line-buffered 'level=WARN .*message="Redacted'
 ```
 
-Expected: `Redacted 1 value(s) from chat` or
-`from tool output`, with no raw token in the line.
+Expected: `Redacted 1 value(s) from chat`, `from model context`,
+or `from tool output`, with no raw token in the line.
 
 ### Silent when clean
 
