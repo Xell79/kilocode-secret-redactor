@@ -30,6 +30,9 @@ Do not commit a home `secret-redactor.json`, project
   group/world readability.
 - `src/spans.ts` — UTF-16 span merge, mask, and replacement.
 - `src/vault.ts` — in-memory per-session map.
+- `src/capture-server.ts` — local OpenAI-compatible stub.
+  `npm run capture` records each model request under `capture/`.
+  Manage with `scripts/mock-provider.sh {start|stop|restart|status|logs}`.
 - `scripts/bench-hot-path.mjs` — local hot-path benchmark.
   It is not part of the npm package.
 

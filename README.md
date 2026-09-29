@@ -152,9 +152,13 @@ the Kilo CLI, its config, and its data.
 
 ## Hooks
 
-- `chat.message` and `experimental.chat.messages.transform`
-  redact text before the model sees it.
-- `tool.execute.after` redacts every tool's string output.
+- `chat.message` redacts user text parts before they are stored.
+- `experimental.chat.messages.transform` redacts text parts and
+  completed tool state (`output`, `error`, and string fields inside
+  `input`) on the copy of history sent to the model. Tool metadata
+  is left unchanged.
+- `tool.execute.after` redacts every tool's string output before it
+  is saved.
 - `tool.execute.before` restores placeholders only for
   `bash`, `write`, and `edit` by default.
 - `experimental.text.complete` restores placeholders in
@@ -220,6 +224,61 @@ rg "run=.*" ~/.local/share/kilo/log/opencode.log | head -20
 Kilo loads the plugin silently at startup. A missing
 Betterleaks with `scannerMode: "required"` prevents Kilo
 from starting at all.
+
+### Mock testing (inspection of outbound model payload)
+
+To verify what Kilo actually sends to the model without exposing tokens
+to an external provider, run the bundled mock capture server:
+
+```bash
+npm run capture
+# Listening on http://127.0.0.1:8787/v1
+```
+
+Point Kilo at it by adding or switching the provider in `~/.config/kilo/kilo.jsonc`:
+
+```jsonc
+{
+  "provider": {
+    "mock": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Model capture",
+      "options": {
+        "baseURL": "http://127.0.0.1:8787/v1",
+        "apiKey": "local-capture"
+      },
+      "models": {
+        "mock-model": {
+          "name": "mock-model"
+        }
+      }
+    }
+  },
+  "model": "mock/mock-model"
+}
+```
+
+Every model call is written to `./capture/<timestamp>-<seq>.json`.
+You can manage the server using the helper script or npm:
+
+```bash
+# Using the helper script:
+./scripts/mock-provider.sh start
+./scripts/mock-provider.sh status
+./scripts/mock-provider.sh logs
+./scripts/mock-provider.sh stop
+
+# Or via npm:
+npm run capture:start
+npm run capture:status
+npm run capture:stop
+```
+
+You can also inspect the latest outbound body directly:
+
+```bash
+curl -s http://127.0.0.1:8787/v1/captures/latest | jq .body.messages
+```
 
 ## Boundaries
 

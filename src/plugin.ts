@@ -13,6 +13,12 @@ import { createVault, type SecretVault } from "./vault.js";
 interface TextPart {
   type: string;
   text?: string;
+  state?: {
+    status?: string;
+    input?: unknown;
+    output?: unknown;
+    error?: unknown;
+  };
 }
 
 interface SessionState {
@@ -27,6 +33,10 @@ export interface ServerOptions {
   loadEnv?: typeof loadEnvFindings;
   worktree?: string;
   configPath?: string;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isTextPart(part: unknown): part is TextPart & { text: string } {
@@ -113,15 +123,66 @@ export function createServer(serverOptions: ServerOptions = {}) {
       };
     };
 
-    const redactParts = async (parts: TextPart[], sessionID: string): Promise<number> => {
+    const redactField = async (
+      value: unknown,
+      sessionID: string,
+      assign: (next: unknown) => void,
+    ): Promise<number> => {
+      if (typeof value !== "string" || value.length === 0) return 0;
       const { redactDeep } = await import("./redactor.js");
       const state = stateFor(sessionID);
+      const result = await redactDeep(value, state.vault, contextFor(sessionID));
+      assign(result.value);
+      return result.labels.length;
+    };
+
+    const redactTree = async (
+      value: unknown,
+      sessionID: string,
+      assign: (next: unknown) => void,
+    ): Promise<number> => {
+      if (typeof value === "string") return redactField(value, sessionID, assign);
+      if (Array.isArray(value)) {
+        let count = 0;
+        for (let index = 0; index < value.length; index++) {
+          count += await redactTree(value[index], sessionID, (next) => {
+            value[index] = next;
+          });
+        }
+        return count;
+      }
+      if (!isPlainRecord(value)) return 0;
+      let count = 0;
+      for (const key of Object.keys(value)) {
+        count += await redactTree(value[key], sessionID, (next) => {
+          value[key] = next;
+        });
+      }
+      return count;
+    };
+
+    const redactParts = async (parts: TextPart[], sessionID: string): Promise<number> => {
       let count = 0;
       for (const part of parts) {
-        if (!isTextPart(part)) continue;
-        const result = await redactDeep(part.text, state.vault, contextFor(sessionID));
-        part.text = result.value as string;
-        count += result.labels.length;
+        if (isTextPart(part)) {
+          count += await redactField(part.text, sessionID, (next) => {
+            part.text = next as string;
+          });
+        }
+        // Model context is built from completed tool state, not from a
+        // separate text part. `tool.execute.after` covers the live call;
+        // this covers history that was stored before redaction or reloaded.
+        if (part.type !== "tool" || !part.state) continue;
+        const toolState = part.state;
+        count += await redactField(toolState.output, sessionID, (next) => {
+          toolState.output = next;
+        });
+        count += await redactField(toolState.error, sessionID, (next) => {
+          toolState.error = next;
+        });
+        count += await redactTree(toolState.input, sessionID, (next) => {
+          toolState.input = next;
+        });
       }
       return count;
     };

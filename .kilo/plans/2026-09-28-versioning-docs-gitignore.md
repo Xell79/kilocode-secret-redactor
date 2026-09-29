@@ -19,11 +19,11 @@ Add programmatic versioning to the package (version bump to 0.7.0, `VERSION` con
   - [x] Run `npm test`
   - [x] Run linter subagent
   - [x] Run `npm run build`
-- [ ] 5. Commit and push:
-  - [ ] Review `git status` and `git diff`
-  - [ ] Verify git author/committer ident
-  - [ ] Create clean commit with concise message
-  - [ ] Push to `origin/main`
+- [x] 5. Commit and push:
+  - [x] Review `git status` and `git diff`
+  - [x] Verify git author/committer ident
+  - [x] Create clean commit with concise message
+  - [x] Push to `origin/main`
 
 ## Notes
 - Keep opaque redaction placeholders (e.g. `xell79@gmail.com`) intact.

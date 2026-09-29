@@ -35,6 +35,12 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
+    "capture": "node dist/capture-server.js",
+    "capture:start": "./scripts/mock-provider.sh start",
+    "capture:stop": "./scripts/mock-provider.sh stop",
+    "capture:restart": "./scripts/mock-provider.sh restart",
+    "capture:status": "./scripts/mock-provider.sh status",
+    "capture:logs": "./scripts/mock-provider.sh logs",
     "lint": "biome check src/",
     "lint:fix": "biome check --write src/",
     "format": "biome format --write src/"

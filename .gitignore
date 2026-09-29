@@ -15,7 +15,9 @@ ses_*.json
 # Testing and coverage
 coverage/
 *.log
+*.pid
 .vitest/
+capture/
 
 # Tool and language caches
 .ruff_cache/

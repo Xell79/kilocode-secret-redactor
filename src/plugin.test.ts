@@ -85,6 +85,36 @@ describe("kilocode plugin", () => {
     expect(messages[0].parts[0].text).toMatch(/^🔒github_pat_\d+🔓$/);
   });
 
+  it("redacts tool state that the model reads from history", async () => {
+    const { hooks: loaded } = await hooks();
+    const messages = [
+      {
+        info: { sessionID: "s1" },
+        parts: [
+          {
+            type: "tool",
+            tool: "read",
+            state: {
+              status: "completed",
+              input: { filePath: "/tmp/secret.txt", note: `see ${github}` },
+              output: `1: token ${github}`,
+              error: undefined,
+              metadata: { preview: github, truncated: false },
+            },
+          },
+        ],
+      },
+    ];
+    await loaded["experimental.chat.messages.transform"]?.({} as never, { messages } as never);
+    const state = messages[0].parts[0].state;
+    expect(state.output).toMatch(/^1: token 🔒github_pat_\d+🔓$/);
+    expect(state.input).toMatchObject({
+      filePath: "/tmp/secret.txt",
+      note: expect.stringMatching(/^see 🔒github_pat_\d+🔓$/),
+    });
+    expect(state.metadata).toEqual({ preview: github, truncated: false });
+  });
+
   it("does not restore a token from another session", async () => {
     const { hooks: loaded } = await hooks();
     const parts = [{ type: "text", text: github }];
